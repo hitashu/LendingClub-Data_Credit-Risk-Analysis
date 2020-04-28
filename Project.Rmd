@@ -1,0 +1,383 @@
+---
+title: "Project"
+author: "Sarang Pande"
+date: "4/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries
+
+```{r}
+library(dplyr)
+library(leaps)
+library(tidyverse)
+library(cowplot)
+library(GGally)
+library(Metrics)
+library(glmnet)
+library(pls)
+library(caret)
+library(nnet)
+library(tree)
+library(gridExtra)
+```
+
+# Data Gathering
+
+```{r}
+loan_data <- read.csv('loan.csv')
+```
+
+# Data Preprocessing
+
+Lets extract all the borrower characteristic available before he applies for a loan. 
+
+```{r}
+column_vector <- c('loan_amnt', 'term', 'int_rate', 'emp_length', 'home_ownership', 'annual_inc', 'verification_status', 'purpose', 'addr_state', 'dti', 'open_acc', 'total_acc', 'grade', 'sub_grade', 'delinq_2yrs', 'inq_last_6mths', 'pub_rec', 'revol_bal', 'revol_util')
+loan_data_filtered <- loan_data %>% select(all_of(column_vector))
+```
+
+Lets drop rows missing any of the data.
+
+```{r}
+loan_data_filtered <- drop_na(loan_data_filtered)
+```
+
+```{r}
+summary(loan_data_filtered)
+```
+
+```{r}
+a <- loan_data_filtered %>% select(home_ownership, annual_inc, dti, revol_util)
+plot1 <- ggplot(a) + geom_histogram(aes(annual_inc), bins = 30, color = 'red') + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+plot2 <- ggplot(a) + geom_bar(aes(home_ownership)) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+plot3 <- ggplot(a) + geom_histogram(aes(dti), bins = 30) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+plot4 <- ggplot(a) + geom_histogram(aes(revol_util), bins = 30) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+grid.arrange(plot1, plot2, plot3, plot4, ncol=2)
+```
+# Data Transformation
+
+```{r}
+table(loan_data_filtered$emp_length)
+loan_data_filtered <- loan_data_filtered %>% filter(emp_length != 'n/a')
+```
+
+```{r}
+loan_data_filtered <- loan_data_filtered %>% mutate(years = ifelse(emp_length ==  "< 1 year", 0, ifelse(emp_length ==  "1 year", 1, ifelse(emp_length ==  "2 years", 2, ifelse(emp_length ==  "3 years", 3, ifelse(emp_length ==  "4 years", 4, ifelse(emp_length ==  "5 years", 5, ifelse(emp_length ==  "6 years", 6, ifelse(emp_length ==  "7 years", 7, ifelse(emp_length ==  "8 years", 8, ifelse(emp_length ==  "9 years", 9, 10)))))))))))
+loan_data_filtered <- loan_data_filtered %>% select(-emp_length)
+loan_data_filtered$years <- as.factor(loan_data_filtered$years)
+```
+
+```{r}
+table(loan_data_filtered$home_ownership)
+loan_data_filtered$home_ownership <- as.character(loan_data_filtered$home_ownership)
+loan_data_filtered <- loan_data_filtered %>% filter(home_ownership %in% c('MORTGAGE', 'OWN', 'RENT'))
+loan_data_filtered$home_ownership <- as.factor(loan_data_filtered$home_ownership)
+```
+
+```{r}
+boxplot(loan_data_filtered$annual_inc)
+hist(loan_data_filtered$annual_inc, breaks = 100)
+```
+
+```{r}
+outliers <- boxplot(loan_data_filtered$annual_inc, plot = FALSE)$out
+loan_data_filtered <- loan_data_filtered[-which(loan_data_filtered$annual_inc %in% outliers),]
+```
+
+```{r}
+class(loan_data_filtered$purpose)
+loan_data_filtered$purpose <- as.character(loan_data_filtered$purpose)
+```
+
+```{r}
+table(loan_data_filtered$purpose)
+loan_data_filtered <- loan_data_filtered %>% mutate(purpose = ifelse(purpose %in% c('educational', 'house', 'vacation', 'wedding', 'renewable_energy', 'moving'), 'other', purpose))
+loan_data_filtered$purpose <- as.factor(loan_data_filtered$purpose)
+```
+
+```{r}
+boxplot(loan_data_filtered$dti)
+hist(loan_data_filtered$dti, breaks = 100)
+```
+
+```{r}
+outliers <- boxplot(loan_data_filtered$dti, plot = FALSE)$out
+loan_data_filtered <- loan_data_filtered[-which(loan_data_filtered$dti %in% outliers),]
+loan_data_filtered <- loan_data_filtered %>% filter(dti >= 0)
+```
+
+```{r}
+boxplot(loan_data_filtered$open_acc)
+hist(loan_data_filtered$open_acc, breaks = 100)
+```
+
+```{r}
+outliers <- boxplot(loan_data_filtered$open_acc, plot = FALSE)$out
+#loan_data_filtered <- loan_data_filtered[-which(loan_data_filtered$open_acc %in% outliers),]
+```
+
+```{r}
+boxplot(loan_data_filtered$total_acc)
+hist(loan_data_filtered$total_acc, breaks = 100)
+```
+
+```{r}
+outliers <- boxplot(loan_data_filtered$total_acc, plot = FALSE)$out
+#loan_data_filtered <- loan_data_filtered[-which(loan_data_filtered$total_acc %in% outliers),]
+```
+
+```{r}
+boxplot(loan_data_filtered$revol_bal)
+hist(loan_data_filtered$revol_bal, breaks = 100)
+```
+
+```{r}
+outliers <- boxplot(loan_data_filtered$revol_bal, plot = FALSE)$out
+#loan_data_filtered <- loan_data_filtered[-which(loan_data_filtered$revol_bal %in% outliers),]
+```
+
+```{r}
+boxplot(loan_data_filtered$revol_util)
+hist(loan_data_filtered$revol_util, breaks = 100)
+```
+
+```{r}
+outliers <- boxplot(loan_data_filtered$revol_util, plot = FALSE)$out
+loan_data_filtered <- loan_data_filtered[-which(loan_data_filtered$revol_util %in% outliers),]
+```
+
+```{r}
+#loan_data_filtered$pub_rec <- as.factor(loan_data_filtered$pub_rec)
+#loan_data_filtered$inq_last_6mths <- as.factor(loan_data_filtered$inq_last_6mths)
+#loan_data_filtered$delinq_2yrs <- as.factor(loan_data_filtered$delinq_2yrs)
+loan_data_filtered <- loan_data_filtered %>% select(-addr_state)
+```
+
+```{r}
+normalize <- function(x)
+{
+    return((x- min(x)) /(max(x)-min(x)))
+}
+
+loan_data_filtered$loan_amnt <- sapply(list(loan_data_filtered$loan_amnt), normalize)
+loan_data_filtered$annual_inc <- sapply(list(loan_data_filtered$annual_inc), normalize)
+loan_data_filtered$revol_bal <- sapply(list(loan_data_filtered$revol_bal), normalize)
+```
+
+
+# Modelling
+
+## Forward Selection
+
+```{r}
+regfit.fwd = regsubsets(int_rate ~ ., data = loan_data_filtered, really.big = TRUE, method ="forward", nvmax = 30)
+```
+
+```{r}
+regfit.fwd.summary <- summary(regfit.fwd)
+par(mfrow=c(2, 2))
+plot(regfit.fwd.summary$rss ,xlab="Number of Variables ",ylab="RSS",type="l") 
+plot(regfit.fwd.summary$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l")
+plot(regfit.fwd.summary$cp ,xlab="Number of Variables ",ylab="Cp", type='l')
+plot(regfit.fwd.summary$bic ,xlab="Number of Variables ",ylab="BIC",type='l')
+```
+
+```{r}
+coef(regfit.fwd, 6)
+```
+
+```{r}
+plot(regfit.fwd,scale="r2")
+plot(regfit.fwd,scale="adjr2")
+plot(regfit.fwd,scale="Cp")
+plot(regfit.fwd,scale="bic")
+```
+
+```{r}
+temp <- loan_data_filtered %>% select(-c('grade','sub_grade'))
+regfit.fwd.v2 = regsubsets(int_rate ~ ., data = temp, really.big = TRUE, method ="forward", nvmax = 40)
+```
+
+```{r}
+plot(regfit.fwd.summary$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l", col='red')
+lines(regfit.fwd.v2.summary$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq",type="l", col = 'green')
+legend("bottomright", legend=c("With Grades", "Without Grades"),col=c("red", "green"), lty=1:2, cex=0.8)
+title('Forward selection with and without grades')
+```
+
+```{r}
+regfit.fwd.v2.summary <- summary(regfit.fwd.v2)
+par(mfrow=c(2, 2))
+plot(regfit.fwd.v2.summary$rss ,xlab="Number of Variables ",ylab="RSS",type="l") 
+
+plot(regfit.fwd.v2.summary$cp ,xlab="Number of Variables ",ylab="Cp", type='l')
+plot(regfit.fwd.v2.summary$bic ,xlab="Number of Variables ",ylab="BIC",type='l')
+```
+
+```{r}
+
+```
+
+```{r}
+coef(regfit.fwd.v2, 16)
+```
+
+```{r}
+plot(regfit.fwd.v2,scale="r2")
+plot(regfit.fwd.v2,scale="adjr2")
+plot(regfit.fwd.v2,scale="Cp")
+plot(regfit.fwd.v2,scale="bic")
+```
+
+## Lasso Regression
+
+```{r}
+y <- loan_data_filtered$int_rate
+x <- loan_data_filtered %>% select(-int_rate) %>% data.matrix()
+lambda_seq <- 10^seq(2, -2, by = -.1)
+
+# Splitting the data into test and train
+set.seed(7)
+train = sample(1:nrow(x), nrow(x)/2)
+x_test = (-train)
+y_test = y[-train]
+
+cv_output <- cv.glmnet(x[train,], y[train], alpha = 1, lambda = lambda_seq)
+
+# identifying best lamda
+best_lam <- cv_output$lambda.min
+
+#lambdas <- 10^seq(3, -2, by = -.1)
+#cv_fit <- cv.glmnet(x, y, alpha = 0, lambda = lambdas)
+#plot(cv_fit)
+```
+
+```{r}
+lasso_best <- glmnet(x[train,], y[train], alpha = 1, lambda = best_lam)
+```
+
+```{r}
+coef(lasso_best)
+```
+
+## Principal Component Regression
+
+```{r}
+set.seed(2)
+pcr.fit=pcr(int_rate ~ ., data=loan_data_filtered , scale=TRUE , validation ="CV")
+```
+
+```{r}
+b <- pcr.fit
+#summary(pcr.fit)
+validationplot(b, val.type="MSEP")
+```
+
+```{r}
+set.seed(2)
+pcr.temp.fit=pcr(int_rate ~ ., data=temp , scale=TRUE , validation ="CV")
+```
+
+```{r}
+#summary(pcr.temp.fit)
+plot1 <- validationplot(pcr.temp.fit, val.type="MSEP")
+plot2 <- validationplot(b, val.type="MSEP")
+grid.arrange(plot1, plot2, ncol = 2)
+```
+
+## Partial Least Squares
+
+```{r}
+pls.fit=plsr(int_rate ~ ., data=loan_data_filtered , scale=TRUE , validation ="CV")
+pls.temp.fit=pcr(int_rate ~ ., data=temp , scale=TRUE , validation ="CV")
+```
+
+```{r}
+validationplot(pls.fit, val.type="R2")
+validationplot(pls.temp.fit, val.type="R2")
+```
+
+## Logistic Regression
+
+```{r}
+new_temp <- loan_data_filtered %>% select(-c(sub_grade, int_rate, years))
+table(new_temp$grade)
+```
+
+
+## Upsampling
+
+```{r}
+new_temp$grade <- as.character(new_temp$grade)
+new_temp_1 <- new_temp %>% filter(grade != 'G')
+new_temp_1$grade <- as.factor(new_temp_1$grade)
+x_1 <- new_temp_1 %>% select(-grade)
+data_1 <- downSample(x = x_1, y = new_temp_1$grade)
+
+new_temp_2 <- new_temp %>% filter(grade %in% c('F', 'G'))
+new_temp_2$grade <- as.factor(new_temp_2$grade)
+x_2 <- new_temp_2 %>% select(-grade)
+data_2 <- upSample(x = x_2, y = new_temp_2$grade)
+data_2 <- data_2 %>% filter(Class == 'G')
+
+data <- rbind(data_1, data_2)
+```
+
+## Downsampling
+```{r}
+x <- new_temp %>% select(-grade)
+set.seed(234)
+data <- downSample(x = x, y = new_temp$grade)
+```
+
+## Sampling
+
+```{r}
+new_temp <- sample_n(new_temp, 78000)
+table(new_temp$grade)
+data <- new_temp %>% mutate(Class = grade) %>% select(-grade)
+```
+
+```{r}
+table(data$Class)
+```
+
+```{r}
+set.seed(7)
+train_indices <- sample(seq_len(nrow(data)), size = 0.75*nrow(data))
+train_data <- data[train_indices,]
+test_data <- data[-train_indices,]
+```
+
+```{r}
+glm.fits = multinom(Class ~ ., data=train_data)
+summary(glm.fits)
+```
+
+```{r}
+predicted_class <- predict(glm.fits, test_data)
+```
+
+```{r}
+write.csv(table(predicted_class, test_data$Class))
+```
+
+
+## Decision Tree
+
+```{r}
+tree.fit = tree(Class ~ ., train_data)
+summary(tree.fit)
+```
+
+## Random Forest
+
+```{r}
+tree.fit = tree(Class ~ ., train_data)
+summary(tree.fit)
+```
